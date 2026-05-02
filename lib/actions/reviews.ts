@@ -30,7 +30,7 @@ export async function getReviews() {
     .eq("created_by", user.id);
 
   const createdIds = (createdReviews || []).map((r: ReviewIdRow) => r.id);
-  const allIds = [...new Set([...reviewIds, ...createdIds])];
+  const allIds = Array.from(new Set([...reviewIds, ...createdIds]));
 
   if (!allIds.length) return [] as Review[];
 
