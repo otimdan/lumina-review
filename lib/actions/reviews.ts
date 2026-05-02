@@ -4,6 +4,10 @@ import { redirect } from "next/navigation";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import type { Review } from "@/types";
 
+type RefRow = { status: string };
+type MemberRow = { review_id: string };
+type ReviewIdRow = { id: string };
+
 export async function getReviews() {
   const supabase = await createClient();
   const {
@@ -13,21 +17,19 @@ export async function getReviews() {
 
   const admin = createAdminClient();
 
-  // Get review IDs this user is a member of
   const { data: memberships } = await admin
     .from("review_members")
     .select("review_id")
     .eq("user_id", user.id);
 
-  const reviewIds = (memberships || []).map((m) => m.review_id);
+  const reviewIds = (memberships || []).map((m: MemberRow) => m.review_id);
 
-  // Also get reviews created by this user
   const { data: createdReviews } = await admin
     .from("reviews")
     .select("id")
     .eq("created_by", user.id);
 
-  const createdIds = (createdReviews || []).map((r) => r.id);
+  const createdIds = (createdReviews || []).map((r: ReviewIdRow) => r.id);
   const allIds = [...new Set([...reviewIds, ...createdIds])];
 
   if (!allIds.length) return [] as Review[];
@@ -40,19 +42,18 @@ export async function getReviews() {
 
   if (error) throw new Error(error.message);
 
-  return (data || []).map((r) => ({
-    ...r,
-    ref_count: (r.refs as { status: string }[]).length,
-    pending_count: (r.refs as { status: string }[]).filter(
-      (x) => x.status === "pending",
-    ).length,
-    irrelevant_count: (r.refs as { status: string }[]).filter(
-      (x) => x.status === "irrelevant",
-    ).length,
-    relevant_count: (r.refs as { status: string }[]).filter(
-      (x) => x.status === "relevant",
-    ).length,
-  })) as Review[];
+  return (data || []).map((r: Record<string, unknown>) => {
+    const refs = (r.refs as RefRow[]) || [];
+    return {
+      ...r,
+      ref_count: refs.length,
+      pending_count: refs.filter((x: RefRow) => x.status === "pending").length,
+      irrelevant_count: refs.filter((x: RefRow) => x.status === "irrelevant")
+        .length,
+      relevant_count: refs.filter((x: RefRow) => x.status === "relevant")
+        .length,
+    };
+  }) as unknown as Review[];
 }
 
 export async function getReview(id: string) {
@@ -89,43 +90,6 @@ export async function getReview(id: string) {
   };
 }
 
-// export async function createReview(formData: {
-//   name: string;
-//   type: string;
-//   question_type?: string;
-//   area?: string;
-//   is_cochrane?: boolean;
-//   main_purpose?: string;
-//   primary_purpose?: string;
-// }) {
-//   // 1. Verify user is authenticated via regular client (respects auth)
-//   const supabase = await createClient();
-//   const {
-//     data: { user },
-//   } = await supabase.auth.getUser();
-//   if (!user) redirect("/login");
-
-//   // 2. Write with admin client — bypasses RLS, user already verified above
-//   const admin = createAdminClient();
-
-//   const { data: review, error } = await admin
-//     .from("reviews")
-//     .insert({ ...formData, created_by: user.id })
-//     .select()
-//     .single();
-
-//   if (error) throw new Error(error.message);
-
-//   // 3. Auto-add creator as admin member
-//   await admin.from("review_members").insert({
-//     review_id: review.id,
-//     user_id: user.id,
-//     role: "admin",
-//   });
-
-//   revalidatePath("/reviews");
-//   return review as Review;
-// }
 export async function createReview(formData: {
   name: string;
   type: string;
@@ -143,13 +107,15 @@ export async function createReview(formData: {
 
   const admin = createAdminClient();
 
-  // Ensure profile exists before inserting review (handles missing trigger)
+  // Ensure profile exists before inserting review
   await admin.from("profiles").upsert(
     {
       id: user.id,
       email: user.email ?? "",
       full_name:
-        user.user_metadata?.full_name ?? user.email?.split("@")[0] ?? "User",
+        (user.user_metadata?.full_name as string | undefined) ??
+        user.email?.split("@")[0] ??
+        "User",
     },
     { onConflict: "id" },
   );
@@ -171,6 +137,7 @@ export async function createReview(formData: {
   revalidatePath("/reviews");
   return review as Review;
 }
+
 export async function inviteMember(reviewId: string, email: string) {
   const supabase = await createClient();
   const {
@@ -211,11 +178,11 @@ export async function getReviewStats(reviewId: string) {
     .select("status")
     .eq("review_id", reviewId);
 
-  const all = data || [];
+  const all = (data || []) as RefRow[];
   return {
     total: all.length,
-    pending: all.filter((r) => r.status === "pending").length,
-    relevant: all.filter((r) => r.status === "relevant").length,
-    irrelevant: all.filter((r) => r.status === "irrelevant").length,
+    pending: all.filter((r: RefRow) => r.status === "pending").length,
+    relevant: all.filter((r: RefRow) => r.status === "relevant").length,
+    irrelevant: all.filter((r: RefRow) => r.status === "irrelevant").length,
   };
 }
